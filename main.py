@@ -173,6 +173,10 @@ class FileSelectorScreen(Screen):
             self.parent.file_path = str(file_path)
             self.app.switch_screen(MainScreen())
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle the user pressing enter in the input box."""
+        self.action_load_file()
+
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         pass
 
@@ -230,10 +234,21 @@ class FileSelectorScreen(Screen):
             self.update_file_list(file_input.value)
 
     def action_load_file(self) -> None:
-        file_input = self.query_one("#file_filter_input", Input)
-        file_name = file_input.value
-        if file_name:
-            self.app.exit(str(file_name))
+        """Load the selected file when Enter is pressed."""
+        list_view = self.query_one(ListView)
+        file_name = None
+
+        # Prioritize the highlighted item in the list
+        if list_view.highlighted_child:
+            file_name = list_view.highlighted_child.children[0].renderable
+        else:
+            # Fallback to the input value if nothing is highlighted
+            file_input = self.query_one(Input)
+            file_name = file_input.value
+
+        if file_name and os.path.isfile(str(file_name)):
+            self.parent.file_path = str(file_name)
+            self.app.switch_screen(MainScreen())
 
 
 class MainScreen(Screen):
