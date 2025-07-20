@@ -143,7 +143,10 @@ class FileSelectorScreen(Screen):
 
     def on_mount(self) -> None:
         self._autocomplete_base_value = ""
-        self._current_autocomplete_matches = []
+        self._current_autocomplete_matches = [
+            entry.name for entry in os.scandir(".")
+            if entry.is_file()
+        ]
         self._autocomplete_cycle_index = -1
         self.update_file_list("")
 
