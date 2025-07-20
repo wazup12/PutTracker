@@ -3,6 +3,7 @@
 
 ### MANUAL ###
 GEMINI.md
+test.txt
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
@@ -180,7 +181,6 @@ pyrightconfig.json
 *.asp
 *.cer
 *.csr
-*.css
 *.htm
 *.html
 *.js
