@@ -189,7 +189,11 @@ class FileSelectorScreen(Screen):
         try:
             for entry in os.scandir("."):
                 if entry.is_file() and entry.name.lower().startswith(effective_filter_str.lower()):
-                    list_view.append(ListItem(Label(entry.name)))
+                    item = ListItem(Label(entry.name))
+                    if entry.name == file_input.value or entry.name == self._autocomplete_base_value:
+                        item.add_class("explicit-match")
+                    
+                    list_view.append(item)
                     if entry.name == file_input.value:
                         highlight_index = current_index
                     current_index += 1
