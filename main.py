@@ -263,7 +263,7 @@ class MainScreen(Screen):
             spreads_table.add_rows(spreads_data.values.tolist())
 
 
-class PutStrikeAnalyzerApp(App):
+class AnalyzerApp(App):
     """A Textual app to analyze put strikes."""
     def __init__(self, file_path=None):
         super().__init__()
@@ -281,7 +281,7 @@ def main():
     parser.add_argument("file", nargs="?", help="Path to the TSV file")
     args = parser.parse_args()
 
-    app = PutStrikeAnalyzerApp(file_path=args.file)
+    app = AnalyzerApp(file_path=args.file)
     app.run()
 
 if __name__ == "__main__":
