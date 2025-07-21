@@ -155,7 +155,7 @@ def get_spreads_data(file_path, logger):
         logger.info(puts.head().to_string())
         logger.info("-----------------------------------------------------")
 
-        puts['Price'] = pd.to_numeric(puts['Price'].replace({r'\: '}, regex=True), errors='coerce')
+        puts['Price'] = pd.to_numeric(puts['Price'].replace({r'\$': ''}, regex=True), errors='coerce')
         puts.dropna(subset=['Price'], inplace=True)
         logger.info("--- DataFrame after converting Price to numeric and dropping NaNs in get_spreads_data (first 5 rows): ---")
         logger.info(puts.head().to_string())
