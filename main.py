@@ -1,6 +1,7 @@
 import argparse
 import configparser
 import pandas as pd
+import logging
 from datetime import datetime
 import os
 import sys
@@ -13,54 +14,89 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Label
 from textual.reactive import reactive
 from textual.binding import Binding
 
-def parse_symbol(df):
+def parse_symbol(df, logger):
     """Extracts Ticker, Expiration, Strike, and Type from the 'Symbol' column."""
+    logger.info("--- Entering parse_symbol function ---")
+    logger.info(f"DataFrame before parsing symbols (first 5 rows):\n{df.head().to_string()}")
     try:
         symbol_parts = df['Symbol'].str.split(' ', expand=True)
         df['Ticker'] = symbol_parts[0]
         df['Expiration'] = pd.to_datetime(symbol_parts[1], format='%m/%d/%Y')
         df['Strike'] = pd.to_numeric(symbol_parts[2])
         df['Type'] = symbol_parts[3]
+        logger.info(f"DataFrame after parsing symbols (first 5 rows):\n{df.head().to_string()}")
     except Exception as e:
         # Handle cases where the symbol format is unexpected
-        print(f"Warning: Could not parse all symbols. Error: {e}")
+        logger.warning(f"Could not parse all symbols. Error: {e}")
         df[['Ticker', 'Expiration', 'Strike', 'Type']] = [None, pd.NaT, None, None]
+    logger.info("--- Exiting parse_symbol function ---")
     return df
 
 def _read_file_skip_comments(file_path):
-    """Reads a file, skipping lines until a blank line is encountered.
-    Returns the content after the first blank line.
+    """Reads a file, skipping lines until the header line (containing 'Symbol') is encountered.
+    Returns the content from the header line onwards.
     """
     with open(file_path, 'r') as f:
-        content = f.read()
+        lines = f.readlines()
 
-    # Find the first occurrence of two or more consecutive newlines (a blank line)
-    match = re.search(r'\n\n+', content)
-    if match:
-        return content[match.end():]
-    return content
+    for i, line in enumerate(lines):
+        if 'Symbol' in line:
+            return "".join(lines[i:])
+    return "".join(lines)
 
-def get_sold_puts_data(file_path):
+def get_sold_puts_data(file_path, logger):
     """Returns a DataFrame of sold puts."""
     try:
         file_content = _read_file_skip_comments(file_path)
-        df = pd.read_csv(io.StringIO(file_content), sep='	')
+        logger.info("--- Reading file content for sold puts data ---")
+        logger.info(f"File path: {file_path}")
+        
+        logger.info("-----------------------------------------------------")
+        df = pd.read_csv(io.StringIO(file_content), sep=',', quotechar='"')
+        logger.info("--- Initial DataFrame (first 5 rows): ---")
+        logger.info(df.head().to_string())
+        logger.info("-----------------------------------------------------")
 
         df.columns = [col.split('(')[0].strip() for col in df.columns]
-        df = parse_symbol(df)
+        logger.info("--- DataFrame after cleaning column names (first 5 rows): ---")
+        logger.info(df.head().to_string())
+        logger.info("-----------------------------------------------------")
+        logger.info(f"Unique values in 'Symbol' column before parsing: {df['Symbol'].unique()}")
+
+        # Filter for options before parsing symbols
+        options_df = df[df['Security Type'] == 'Option'].copy()
+        logger.info("--- Options DataFrame before parsing symbols (first 5 rows): ---")
+        logger.info(options_df.head().to_string())
+        logger.info("-----------------------------------------------------")
+
+        options_df = parse_symbol(options_df, logger)
+        logger.info("--- Options DataFrame after parsing symbols (first 5 rows): ---")
+        logger.info(options_df.head().to_string())
+        logger.info("-----------------------------------------------------")
 
         # Filter out rows that couldn't be parsed
-        df.dropna(subset=['Ticker', 'Expiration', 'Strike', 'Type'], inplace=True)
+        options_df.dropna(subset=['Ticker', 'Expiration', 'Strike', 'Type'], inplace=True)
+        logger.info("--- Options DataFrame after dropping unparsed rows (first 5 rows): ---")
+        logger.info(options_df.head().to_string())
+        logger.info("-----------------------------------------------------")
 
-        sold_puts = df[(df['Security Type'] == 'Option') & (df['Type'] == 'P') & (df['Qty'] < 0)].copy()
+        sold_puts = options_df[(options_df['Type'] == 'P') & (options_df['Qty'] < 0)].copy()
+        logger.info("--- DataFrame after filtering for sold puts (first 5 rows): ---")
+        logger.info(sold_puts.head().to_string())
+        logger.info("-----------------------------------------------------")
 
-        sold_puts['Price'] = pd.to_numeric(sold_puts['Price'].replace({r'\$': ''}, regex=True), errors='coerce')
+        sold_puts['Price'] = pd.to_numeric(sold_puts['Price'].replace({r'\: '}, regex=True), errors='coerce')
         sold_puts.dropna(subset=['Price'], inplace=True)
-
+        logger.info("--- DataFrame after converting Price to numeric and dropping NaNs (first 5 rows): ---")
+        logger.info(sold_puts.head().to_string())
+        logger.info("-----------------------------------------------------")
 
         sold_puts['Days Until Expiration'] = (sold_puts['Expiration'] - datetime.now()).dt.days
         # Avoid division by zero or by days in the past
         sold_puts = sold_puts[sold_puts['Days Until Expiration'] > 0]
+        logger.info("--- DataFrame after calculating Days Until Expiration and filtering (first 5 rows): ---")
+        logger.info(sold_puts.head().to_string())
+        logger.info("-----------------------------------------------------")
 
         sold_puts['Remaining Income'] = 100 * sold_puts['Price'] / sold_puts['Strike']
         sold_puts['Remaining % per Day'] = sold_puts['Remaining Income'] / sold_puts['Days Until Expiration']
@@ -72,6 +108,9 @@ def get_sold_puts_data(file_path):
         output_df['Expiration'] = output_df['Expiration'].dt.strftime('%m/%d/%Y')
         output_df['Remaining %'] = output_df['Remaining %'].map('{:.2f}%'.format)
         output_df['Remaining % per Day'] = output_df['Remaining % per Day'].map('{:.2f}%'.format)
+        logger.info("--- Final output_df (first 5 rows): ---")
+        logger.info(output_df.head().to_string())
+        logger.info("-----------------------------------------------------")
 
         return output_df
 
@@ -80,20 +119,47 @@ def get_sold_puts_data(file_path):
     except Exception:
         return pd.DataFrame()
 
-def get_spreads_data(file_path):
+def get_spreads_data(file_path, logger):
     """Returns a DataFrame of spreads."""
     try:
         file_content = _read_file_skip_comments(file_path)
-        df = pd.read_csv(io.StringIO(file_content), sep='\t')
+        df = pd.read_csv(io.StringIO(file_content), sep=',', quotechar='"')
+        logger.info("--- Initial DataFrame (first 5 rows) in get_spreads_data: ---")
+        logger.info(df.head().to_string())
+        logger.info("-----------------------------------------------------")
 
         df.columns = [col.split('(')[0].strip() for col in df.columns]
-        df = parse_symbol(df)
-        df.dropna(subset=['Ticker', 'Expiration', 'Strike', 'Type'], inplace=True)
+        logger.info("--- DataFrame after cleaning column names in get_spreads_data (first 5 rows): ---")
+        logger.info(df.head().to_string())
+        logger.info("-----------------------------------------------------")
+        logger.info(f"Unique values in 'Symbol' column before parsing in get_spreads_data: {df['Symbol'].unique()}")
 
+        # Filter for options before parsing symbols
+        options_df = df[df['Security Type'] == 'Option'].copy()
+        logger.info("--- Options DataFrame before parsing symbols in get_spreads_data (first 5 rows): ---")
+        logger.info(options_df.head().to_string())
+        logger.info("-----------------------------------------------------")
 
-        puts = df[(df['Security Type'] == 'Option') & (df['Type'] == 'P')].copy()
-        puts['Price'] = pd.to_numeric(puts['Price'].replace({r'\$': ''}, regex=True), errors='coerce')
+        options_df = parse_symbol(options_df, logger)
+        logger.info("--- Options DataFrame after parsing symbols in get_spreads_data (first 5 rows): ---")
+        logger.info(options_df.head().to_string())
+        logger.info("-----------------------------------------------------")
+
+        options_df.dropna(subset=['Ticker', 'Expiration', 'Strike', 'Type'], inplace=True)
+        logger.info("--- Options DataFrame after dropping unparsed rows in get_spreads_data (first 5 rows): ---")
+        logger.info(options_df.head().to_string())
+        logger.info("-----------------------------------------------------")
+
+        puts = options_df[(options_df['Type'] == 'P')].copy()
+        logger.info("--- DataFrame after filtering for puts in get_spreads_data (first 5 rows): ---")
+        logger.info(puts.head().to_string())
+        logger.info("-----------------------------------------------------")
+
+        puts['Price'] = pd.to_numeric(puts['Price'].replace({r'\: '}, regex=True), errors='coerce')
         puts.dropna(subset=['Price'], inplace=True)
+        logger.info("--- DataFrame after converting Price to numeric and dropping NaNs in get_spreads_data (first 5 rows): ---")
+        logger.info(puts.head().to_string())
+        logger.info("-----------------------------------------------------")
 
 
         spreads = []
@@ -354,8 +420,8 @@ class MainScreen(Screen):
 
     def on_mount(self) -> None:
         file_path = self.parent.file_path
-        sold_puts_data = get_sold_puts_data(file_path)
-        spreads_data = get_spreads_data(file_path)
+        sold_puts_data = get_sold_puts_data(file_path, self.app.app_logger)
+        spreads_data = get_spreads_data(file_path, self.app.app_logger)
 
         sold_puts_table = self.query_one("#sold_puts_table")
         if not sold_puts_data.empty:
@@ -377,6 +443,11 @@ class PutTracker(App):
         self.config = get_config()
         self.file_directory = os.path.expanduser(self.config['DEFAULT'].get('file_directory', '.'))
         self.file_path = file_path
+
+        # Configure logging
+        logging.basicConfig(filename='debug.log', level=logging.DEBUG,
+                            format='%(asctime)s - %(levelname)s - %(message)s')
+        self.app_logger = logging.getLogger(__name__)
 
     def on_mount(self) -> None:
         if self.config_missing:

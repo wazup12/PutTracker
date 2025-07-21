@@ -4,6 +4,7 @@
 ### MANUAL ###
 GEMINI.md
 test.txt
+*.ini
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
