@@ -74,6 +74,9 @@ def get_sold_puts_data(file_path, logger):
         logger.info(options_df.head().to_string())
         logger.info("-----------------------------------------------------")
 
+        # Convert Qty to numeric before filtering
+        options_df['Qty'] = pd.to_numeric(options_df['Qty'], errors='coerce')
+
         # Filter out rows that couldn't be parsed
         options_df.dropna(subset=['Ticker', 'Expiration', 'Strike', 'Type'], inplace=True)
         logger.info("--- Options DataFrame after dropping unparsed rows (first 5 rows): ---")
@@ -85,7 +88,8 @@ def get_sold_puts_data(file_path, logger):
         logger.info(sold_puts.head().to_string())
         logger.info("-----------------------------------------------------")
 
-        sold_puts['Price'] = pd.to_numeric(sold_puts['Price'].replace({r'\: '}, regex=True), errors='coerce')
+        # Ensure sold_puts is a DataFrame before calling replace and dropna
+        sold_puts['Price'] = pd.to_numeric(sold_puts['Price'].replace(r'\$', '', regex=True), errors='coerce')
         sold_puts.dropna(subset=['Price'], inplace=True)
         logger.info("--- DataFrame after converting Price to numeric and dropping NaNs (first 5 rows): ---")
         logger.info(sold_puts.head().to_string())
@@ -110,13 +114,14 @@ def get_sold_puts_data(file_path, logger):
         output_df['Remaining % per Day'] = output_df['Remaining % per Day'].map('{:.2f}%'.format)
         logger.info("--- Final output_df (first 5 rows): ---")
         logger.info(output_df.head().to_string())
-        logger.info("-----------------------------------------------------")
-
+        logger.info(f"[TUI] get_sold_puts_data returning shape: {output_df.shape}, columns: {output_df.columns.tolist()}")
+        logger.info(f"[TUI] get_sold_puts_data sample:\n{output_df.head().to_string()}")
         return output_df
 
     except FileNotFoundError:
         return pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        logger.error(f"[TUI] Exception in get_sold_puts_data: {e}", exc_info=True)
         return pd.DataFrame()
 
 def get_spreads_data(file_path, logger):
@@ -155,7 +160,8 @@ def get_spreads_data(file_path, logger):
         logger.info(puts.head().to_string())
         logger.info("-----------------------------------------------------")
 
-        puts['Price'] = pd.to_numeric(puts['Price'].replace({r'\$': ''}, regex=True), errors='coerce')
+        puts['Price'] = pd.to_numeric(puts['Price'].replace(r'\$', '', regex=True), errors='coerce')
+        puts['Qty'] = pd.to_numeric(puts['Qty'], errors='coerce')
         puts.dropna(subset=['Price'], inplace=True)
         logger.info("--- DataFrame after converting Price to numeric and dropping NaNs in get_spreads_data (first 5 rows): ---")
         logger.info(puts.head().to_string())
@@ -165,6 +171,8 @@ def get_spreads_data(file_path, logger):
         spreads = []
         for _, group in puts.groupby(['Ticker', 'Expiration']):
             if len(group) > 1:
+                # Convert Qty to numeric in group
+                group['Qty'] = pd.to_numeric(group['Qty'], errors='coerce')
                 short_puts = group[group['Qty'] < 0]
                 long_puts = group[group['Qty'] > 0]
 
@@ -195,10 +203,15 @@ def get_spreads_data(file_path, logger):
                                         'Risk per Contract': f"${risk_per_contract:,.2f}"
                                     })
         if spreads:
-            return pd.DataFrame(spreads)
+            df_spreads = pd.DataFrame(spreads)
+            logger.info(f"[TUI] get_spreads_data returning shape: {df_spreads.shape}, columns: {df_spreads.columns.tolist()}")
+            logger.info(f"[TUI] get_spreads_data sample:\n{df_spreads.head().to_string()}")
+            return df_spreads
+        logger.info("[TUI] get_spreads_data returning empty DataFrame")
         return pd.DataFrame()
 
-    except Exception:
+    except Exception as e:
+        logger.error(f"[TUI] Exception in get_spreads_data: {e}", exc_info=True)
         return pd.DataFrame()
 
 from textual.containers import Vertical
@@ -420,18 +433,32 @@ class MainScreen(Screen):
 
     def on_mount(self) -> None:
         file_path = self.parent.file_path
+        self.app.app_logger.info(f"[TUI] on_mount: file_path={file_path}")
         sold_puts_data = get_sold_puts_data(file_path, self.app.app_logger)
         spreads_data = get_spreads_data(file_path, self.app.app_logger)
 
+        self.app.app_logger.info(f"[TUI] sold_puts_data shape: {sold_puts_data.shape}, columns: {sold_puts_data.columns.tolist()}")
+        self.app.app_logger.info(f"[TUI] spreads_data shape: {spreads_data.shape}, columns: {spreads_data.columns.tolist()}")
+
         sold_puts_table = self.query_one("#sold_puts_table")
+        self.app.app_logger.info(f"[TUI] Got sold_puts_table widget: {sold_puts_table}")
         if not sold_puts_data.empty:
+            self.app.app_logger.info("[TUI] Adding columns and rows to sold_puts_table")
             sold_puts_table.add_columns(*sold_puts_data.columns.to_list())
             sold_puts_table.add_rows(sold_puts_data.values.tolist())
+            self.app.app_logger.info("[TUI] Added columns and rows to sold_puts_table")
+        else:
+            self.app.app_logger.info("[TUI] sold_puts_data is empty, not adding to table")
 
         spreads_table = self.query_one("#spreads_table")
+        self.app.app_logger.info(f"[TUI] Got spreads_table widget: {spreads_table}")
         if not spreads_data.empty:
+            self.app.app_logger.info("[TUI] Adding columns and rows to spreads_table")
             spreads_table.add_columns(*spreads_data.columns.to_list())
             spreads_table.add_rows(spreads_data.values.tolist())
+            self.app.app_logger.info("[TUI] Added columns and rows to spreads_table")
+        else:
+            self.app.app_logger.info("[TUI] spreads_data is empty, not adding to table")
 
 
 class PutTracker(App):
