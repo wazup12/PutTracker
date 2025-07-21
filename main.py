@@ -1,4 +1,5 @@
 import argparse
+import configparser
 import pandas as pd
 from datetime import datetime
 import os
@@ -117,6 +118,41 @@ def get_spreads_data(file_path):
 from textual.containers import Vertical
 from textual.widgets import ListView, ListItem
 
+def get_config():
+    """Reads the configuration from config.ini."""
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+    return config
+
+
+class UpdateDirectoryScreen(Screen):
+    """Screen for updating the file directory."""
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Label("Enter new directory path:")
+        yield Input(placeholder="e.g., ~/Documents/data", id="directory_input")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        """Focus the input on mount."""
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle submission of the new directory path."""
+        new_path = event.value
+        config = self.app.config
+        config['DEFAULT']['file_directory'] = new_path
+        with open('config.ini', 'w') as configfile:
+            config.write(configfile)
+
+        self.app.file_directory = os.path.expanduser(new_path)
+        if self.app.file_path:
+            self.app.switch_screen(MainScreen())
+        else:
+            self.app.switch_screen(FileSelectorScreen())
+
+
 class FileSelectorScreen(Screen):
     """Screen to select a file with a dynamic preview."""
     CSS_PATH = "main.css"
@@ -137,18 +173,33 @@ class FileSelectorScreen(Screen):
         yield Vertical(
             Label("Select a file:"),
             Input(placeholder="Start typing to filter files...", id="file_filter_input"),
-            ListView(id="file_list")
+            ListView(id="file_list"),
+            Label("Press Ctrl+U to update directory", id="hint_label")
         ).add_class("file-selector-container")
         yield Footer()
 
     def on_mount(self) -> None:
+        """Set up the file list when the screen is mounted."""
+        self.refresh_file_list()
+
+    def on_screen_resume(self) -> None:
+        """Refresh the file list when returning to this screen."""
+        self.refresh_file_list()
+
+    def refresh_file_list(self) -> None:
+        """Refreshes the file list from the current directory."""
         self._autocomplete_base_value = ""
-        self._current_autocomplete_matches = [
-            entry.name for entry in os.scandir(".")
-            if entry.is_file()
-        ]
+        try:
+            self._current_autocomplete_matches = [
+                entry.name for entry in os.scandir(self.app.file_directory)
+                if entry.is_file()
+            ]
+        except FileNotFoundError:
+            self._current_autocomplete_matches = []
         self._autocomplete_cycle_index = -1
         self.update_file_list("")
+        self.query_one("#file_filter_input", Input).value = ""
+
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if self._is_programmatic_change:
@@ -159,19 +210,16 @@ class FileSelectorScreen(Screen):
         if not self._is_autocompleting:
             self._autocomplete_base_value = event.value
             self._autocomplete_cycle_index = -1
-            self._current_autocomplete_matches = [
-                entry.name for entry in os.scandir(".")
-                if entry.is_file() and entry.name.lower().startswith(self._autocomplete_base_value.lower())
-            ]
-        
+            try:
+                self._current_autocomplete_matches = [
+                    entry.name for entry in os.scandir(self.app.file_directory)
+                    if entry.is_file() and entry.name.lower().startswith(self._autocomplete_base_value.lower())
+                ]
+            except FileNotFoundError:
+                self._current_autocomplete_matches = []
+
         self._is_autocompleting = False
         self.update_file_list(event.value)
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        file_path = event.item.children[0].renderable
-        if os.path.isfile(str(file_path)):
-            self.parent.file_path = str(file_path)
-            self.app.switch_screen(MainScreen())
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle the user pressing enter in the input box."""
@@ -191,7 +239,7 @@ class FileSelectorScreen(Screen):
         current_index = 0
 
         try:
-            for entry in os.scandir("."):
+            for entry in os.scandir(self.app.file_directory):
                 if entry.is_file() and entry.name.lower().startswith(effective_filter_str.lower()):
                     item = ListItem(Label(entry.name))
                     if entry.name == file_input.value or entry.name == self._autocomplete_base_value:
@@ -201,7 +249,7 @@ class FileSelectorScreen(Screen):
                     if entry.name == file_input.value:
                         highlight_index = current_index
                     current_index += 1
-        except OSError:
+        except (OSError, FileNotFoundError):
             pass # Ignore errors
         
         if highlight_index != -1:
@@ -246,9 +294,21 @@ class FileSelectorScreen(Screen):
             file_input = self.query_one(Input)
             file_name = file_input.value
 
-        if file_name and os.path.isfile(str(file_name)):
-            self.parent.file_path = str(file_name)
-            self.app.switch_screen(MainScreen())
+        if file_name:
+            file_path = os.path.join(self.app.file_directory, str(file_name))
+            if os.path.isfile(file_path):
+                self.app.file_path = file_path
+                self.app.switch_screen(MainScreen())
+            else:
+                # If the file is not found, try to complete the path with the base directory
+                completed_path = os.path.join(self.app.file_directory, file_name)
+                if os.path.isfile(completed_path):
+                    self.app.file_path = completed_path
+                    self.app.switch_screen(MainScreen())
+
+    def action_update_config(self) -> None:
+        """Switch to the update directory screen."""
+        self.app.push_screen(UpdateDirectoryScreen())
 
 
 class MainScreen(Screen):
@@ -280,15 +340,29 @@ class MainScreen(Screen):
 
 class PutTracker(App):
     """A Textual app to analyze put strikes."""
+
     def __init__(self, file_path=None):
         super().__init__()
+        self.config_missing = not os.path.exists('config.ini')
+        self.config = get_config()
+        self.file_directory = os.path.expanduser(self.config['DEFAULT'].get('file_directory', '.'))
         self.file_path = file_path
 
     def on_mount(self) -> None:
-        if self.file_path:
+        if self.config_missing:
+            self.push_screen(UpdateDirectoryScreen())
+        elif self.file_path:
             self.push_screen(MainScreen())
         else:
             self.push_screen(FileSelectorScreen())
+
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+u":
+            self.action_update_config()
+
+    def action_update_config(self) -> None:
+        """Switch to the update directory screen."""
+        self.push_screen(UpdateDirectoryScreen())
 
 
 def main():
