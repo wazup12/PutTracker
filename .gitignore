@@ -5,6 +5,7 @@
 GEMINI.md
 test.txt
 *.ini
+*.cursorrules
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
