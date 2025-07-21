@@ -4,6 +4,8 @@ import pandas as pd
 from datetime import datetime
 import os
 import sys
+import io
+import re
 
 from textual.app import App, ComposeResult
 from textual.screen import Screen
@@ -25,10 +27,25 @@ def parse_symbol(df):
         df[['Ticker', 'Expiration', 'Strike', 'Type']] = [None, pd.NaT, None, None]
     return df
 
+def _read_file_skip_comments(file_path):
+    """Reads a file, skipping lines until a blank line is encountered.
+    Returns the content after the first blank line.
+    """
+    with open(file_path, 'r') as f:
+        content = f.read()
+
+    # Find the first occurrence of two or more consecutive newlines (a blank line)
+    match = re.search(r'\n\n+', content)
+    if match:
+        return content[match.end():]
+    return content
+
 def get_sold_puts_data(file_path):
     """Returns a DataFrame of sold puts."""
     try:
-        df = pd.read_csv(file_path, sep='\t')
+        file_content = _read_file_skip_comments(file_path)
+        df = pd.read_csv(io.StringIO(file_content), sep='	')
+
         df.columns = [col.split('(')[0].strip() for col in df.columns]
         df = parse_symbol(df)
 
@@ -66,7 +83,9 @@ def get_sold_puts_data(file_path):
 def get_spreads_data(file_path):
     """Returns a DataFrame of spreads."""
     try:
-        df = pd.read_csv(file_path, sep='\t')
+        file_content = _read_file_skip_comments(file_path)
+        df = pd.read_csv(io.StringIO(file_content), sep='\t')
+
         df.columns = [col.split('(')[0].strip() for col in df.columns]
         df = parse_symbol(df)
         df.dropna(subset=['Ticker', 'Expiration', 'Strike', 'Type'], inplace=True)
