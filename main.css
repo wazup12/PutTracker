@@ -17,6 +17,17 @@ Input {
     margin: 1;
 }
 
+#update_directory_container {
+    align: center middle;
+    width: 100%;
+    height: 1fr;
+}
+
+.current-directory-label {
+    margin-top: 1;
+    color: gray;
+}
+
 ListView {
     height: 1fr;
     width: 80%;

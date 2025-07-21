@@ -3,6 +3,7 @@ import configparser
 import pandas as pd
 from datetime import datetime
 import os
+import sys
 
 from textual.app import App, ComposeResult
 from textual.screen import Screen
@@ -125,13 +126,23 @@ def get_config():
     return config
 
 
+from textual.containers import Center, Vertical
+
 class UpdateDirectoryScreen(Screen):
     """Screen for updating the file directory."""
+    CSS_PATH = "main.css"
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Label("Enter new directory path:")
-        yield Input(placeholder="e.g., ~/Documents/data", id="directory_input")
+        with Center():
+            with Vertical(id="update_directory_container"):
+                yield Label("Enter new directory path:")
+                if sys.platform == "win32":
+                    yield Input(placeholder="e.g., C:\\Users\\YourUser\\Documents\\data", id="directory_input")
+                else:
+                    yield Input(placeholder="e.g., ~/Documents/data", id="directory_input")
+                if self.app.file_directory:
+                    yield Label(f"Current directory: {self.app.file_directory}", classes="current-directory-label")
         yield Footer()
 
     def on_mount(self) -> None:
