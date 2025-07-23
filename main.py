@@ -36,18 +36,23 @@ def _read_file_skip_comments(file_path):
     return "".join(lines)
 
 
+def _prepare_options_df(file_path, logger):
+    """Read and clean options DataFrame from file."""
+    file_content = _read_file_skip_comments(file_path)
+    df = pd.read_csv(io.StringIO(file_content), sep=",", quotechar='"')
+    df.columns = [col.split("(")[0].strip() for col in df.columns]
+    options_df = filter_options(df)
+    options_df = ensure_dataframe(options_df)
+    options_df = parse_symbol(options_df, logger)
+    options_df["Qty"] = pd.to_numeric(options_df["Qty"], errors="coerce")
+    options_df = drop_invalid_options(options_df)
+    return options_df
+
+
 def get_sold_puts_data(file_path, logger) -> pd.DataFrame:
     """Returns a DataFrame of sold puts."""
     try:
-        file_content = _read_file_skip_comments(file_path)
-        df = pd.read_csv(io.StringIO(file_content), sep=",", quotechar='"')
-        df.columns = [col.split("(")[0].strip() for col in df.columns]
-        # Use utility functions for option filtering and cleaning
-        options_df = filter_options(df)
-        options_df = ensure_dataframe(options_df)
-        options_df = parse_symbol(options_df, logger)
-        options_df["Qty"] = pd.to_numeric(options_df["Qty"], errors="coerce")
-        options_df = drop_invalid_options(options_df)
+        options_df = _prepare_options_df(file_path, logger)
         sold_puts = options_df[
             (options_df["Type"] == "P") & (options_df["Qty"] < 0)
         ].copy()
@@ -96,13 +101,7 @@ def get_sold_puts_data(file_path, logger) -> pd.DataFrame:
 def get_spreads_data(file_path, logger) -> pd.DataFrame:
     """Returns a DataFrame of spreads."""
     try:
-        file_content = _read_file_skip_comments(file_path)
-        df = pd.read_csv(io.StringIO(file_content), sep=",", quotechar='"')
-        df.columns = [col.split("(")[0].strip() for col in df.columns]
-        options_df = filter_options(df)
-        options_df = ensure_dataframe(options_df)
-        options_df = parse_symbol(options_df, logger)
-        options_df = drop_invalid_options(options_df)
+        options_df = _prepare_options_df(file_path, logger)
         puts = options_df[(options_df["Type"] == "P")].copy()
         if isinstance(puts, pd.Series):
             puts = puts.to_frame().T
@@ -293,6 +292,17 @@ class FileSelectorScreen(Screen):
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         pass
 
+    def _get_filtered_files(self, directory, filter_str):
+        """Return a list of file names in directory that start with filter_str (case-insensitive)."""
+        try:
+            return [
+                entry.name
+                for entry in os.scandir(directory)
+                if entry.is_file() and entry.name.lower().startswith(filter_str.lower())
+            ]
+        except (OSError, FileNotFoundError):
+            return []
+
     def update_file_list(self, filter_str: str):
         app = cast(PutTracker, self.app)
         list_view = self.query_one("#file_list", ListView)
@@ -306,24 +316,21 @@ class FileSelectorScreen(Screen):
         highlight_index = -1
         current_index = 0
 
-        try:
-            for entry in os.scandir(app.file_directory):
-                if entry.is_file() and entry.name.lower().startswith(
-                    effective_filter_str.lower()
-                ):
-                    item = ListItem(Label(entry.name))
-                    if (
-                        entry.name == file_input.value
-                        or entry.name == self._autocomplete_base_value
-                    ):
-                        item.add_class("explicit-match")
+        filtered_files = self._get_filtered_files(
+            app.file_directory, effective_filter_str
+        )
+        for entry_name in filtered_files:
+            item = ListItem(Label(entry_name))
+            if (
+                entry_name == file_input.value
+                or entry_name == self._autocomplete_base_value
+            ):
+                item.add_class("explicit-match")
 
-                    list_view.append(item)
-                    if entry.name == file_input.value:
-                        highlight_index = current_index
-                    current_index += 1
-        except (OSError, FileNotFoundError):
-            pass  # Ignore errors
+            list_view.append(item)
+            if entry_name == file_input.value:
+                highlight_index = current_index
+            current_index += 1
 
         if highlight_index != -1:
             list_view.highlighted_index = highlight_index  # type: ignore
