@@ -197,29 +197,29 @@ def get_spreads_data(file_path, logger) -> pd.DataFrame:
                 short_puts = group[group['Qty'] < 0]
                 long_puts = group[group['Qty'] > 0]
 
-                for _, short in short_puts.iterrows():
-                    for _, long in long_puts.iterrows():
-                        if short['Qty'] == -long['Qty']:
-                            price_gap = short['Price'] - long['Price']
-                            strike_gap = short['Strike'] - long['Strike']
+                for _, short_put in short_puts.iterrows():
+                    for _, long_put in long_puts.iterrows():
+                        if short_put['Qty'] == -long_put['Qty']:
+                            price_gap = short_put['Price'] - long_put['Price']
+                            strike_gap = short_put['Strike'] - long_put['Strike']
                             if strike_gap > 0:
-                                days_to_expiration = (short['Expiration'] - datetime.now()).days
+                                days_to_expiration = (short_put['Expiration'] - datetime.now()).days
                                 if days_to_expiration > 0:
                                     expected_income = 100 * price_gap / strike_gap
                                     expected_income_per_day = expected_income / days_to_expiration
                                     risk_per_contract = strike_gap * 100
 
                                     spreads.append({
-                                        'Ticker': short['Ticker'],
-                                        'Expiration': pd.to_datetime(short['Expiration']).strftime('%m/%d/%Y'),
-                                        'Short Strike': short['Strike'],
-                                        'Long Strike': long['Strike'],
-                                        'Short Price': short['Price'],
-                                        'Long Price': long['Price'],
+                                        'Ticker': short_put['Ticker'],
+                                        'Days Left': days_to_expiration,
+                                        # 'Expiration': pd.to_datetime(short['Expiration']).strftime('%Y-%m-%d'),
+                                        'Short Strike': short_put['Strike'],
+                                        'Long Strike': long_put['Strike'],
+                                        'Short Price': short_put['Price'],
+                                        'Long Price': long_put['Price'],
                                         'Price Gap': f"{price_gap:.2f}",
                                         'Strike Gap': strike_gap,
                                         'Expected Income (%)': f"{expected_income:.2f}%",
-                                        'Days to Expiration': days_to_expiration,
                                         'Expected % per Day': f"{expected_income_per_day:.2f}%",
                                         'Risk per Contract': f"${risk_per_contract:,.2f}"
                                     })
