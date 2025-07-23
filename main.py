@@ -1,7 +1,7 @@
 import argparse
 import configparser
 import pandas as pd
-from config_manager import get_config
+from config_manager import ConfigManager
 from dataframe_utils import (
     ensure_dataframe,
     parse_symbol,
@@ -200,12 +200,8 @@ class UpdateDirectoryScreen(Screen):
         """Handle submission of the new directory path."""
         app = cast(PutTracker, self.app)
         new_path = event.value
-        config = app.config
-        config["DEFAULT"]["file_directory"] = new_path
-        with open("config.ini", "w") as configfile:
-            config.write(configfile)
-
-        app.file_directory = os.path.expanduser(new_path)
+        app.config_manager.set_file_directory(new_path)
+        app.file_directory = app.config_manager.get_file_directory()
         if app.file_path:
             app.switch_screen(MainScreen())
         else:
@@ -453,10 +449,9 @@ class PutTracker(App):
     def __init__(self, file_path=None):
         super().__init__()
         self.config_missing = not os.path.exists("config.ini")
-        self.config = get_config()
-        self.file_directory = os.path.expanduser(
-            self.config["DEFAULT"].get("file_directory", ".")
-        )
+        self.config_manager = ConfigManager()
+        self.config = self.config_manager.config
+        self.file_directory = self.config_manager.get_file_directory()
         self.file_path = file_path
 
         # Set up logging level based on DEBUG in config
