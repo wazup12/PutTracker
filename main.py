@@ -1,12 +1,19 @@
 import argparse
 import configparser
 import pandas as pd
+from config_manager import get_config
+from dataframe_utils import (
+    ensure_dataframe,
+    parse_symbol,
+    filter_options,
+    drop_invalid_options,
+    clean_price_column,
+)
 import logging
 from datetime import datetime
 import os
 import sys
 import io
-import re
 
 from textual.app import App, ComposeResult
 from textual.screen import Screen
@@ -14,36 +21,6 @@ from textual.widgets import Button, DataTable, Footer, Header, Input, Label
 from textual.reactive import reactive
 from textual.binding import Binding
 from typing import cast
-
-
-def parse_symbol(df: pd.DataFrame, logger) -> pd.DataFrame:
-    """Extracts Ticker, Expiration, Strike, and Type from the 'Symbol' column."""
-
-    try:
-        symbol_parts = df["Symbol"].str.split(" ", expand=True)
-        df["Ticker"] = symbol_parts[0]
-        df["Expiration"] = pd.to_datetime(symbol_parts[1], format="%m/%d/%Y")
-        df["Strike"] = pd.to_numeric(symbol_parts[2])
-        df["Type"] = symbol_parts[3]
-
-    except Exception as e:
-        # Handle cases where the symbol format is unexpected
-
-        df["Ticker"] = None
-        df["Expiration"] = pd.NaT
-        df["Strike"] = None
-        df["Type"] = None
-
-    return df
-
-
-def ensure_dataframe(obj) -> pd.DataFrame:
-    if isinstance(obj, pd.Series):
-        return obj.to_frame().T
-    elif isinstance(obj, pd.DataFrame):
-        return obj
-    else:
-        return pd.DataFrame(obj)
 
 
 def _read_file_skip_comments(file_path):
@@ -65,40 +42,27 @@ def get_sold_puts_data(file_path, logger) -> pd.DataFrame:
         file_content = _read_file_skip_comments(file_path)
         df = pd.read_csv(io.StringIO(file_content), sep=",", quotechar='"')
         df.columns = [col.split("(")[0].strip() for col in df.columns]
-        # Filter for options before parsing symbols
-        options_df = df[df["Security Type"] == "Option"].copy()
+        # Use utility functions for option filtering and cleaning
+        options_df = filter_options(df)
         options_df = ensure_dataframe(options_df)
         options_df = parse_symbol(options_df, logger)
-        # Convert Qty to numeric before filtering
         options_df["Qty"] = pd.to_numeric(options_df["Qty"], errors="coerce")
-        # Filter out rows that couldn't be parsed
-        options_df.dropna(
-            subset=["Ticker", "Expiration", "Strike", "Type"], inplace=True
-        )
+        options_df = drop_invalid_options(options_df)
         sold_puts = options_df[
             (options_df["Type"] == "P") & (options_df["Qty"] < 0)
         ].copy()
         sold_puts = ensure_dataframe(sold_puts)
-
-        # Ensure sold_puts is a DataFrame before calling replace and dropna
-        sold_puts["Price"] = pd.to_numeric(
-            sold_puts["Price"].astype(str).replace(r"\$", "", regex=True),
-            errors="coerce",
-        )
+        sold_puts = clean_price_column(sold_puts, "Price")
         sold_puts.dropna(subset=["Price"], inplace=True)
-
         sold_puts["Days Until Expiration"] = (
             sold_puts["Expiration"] - datetime.now()
         ).dt.days
-        # Avoid division by zero or by days in the past
         sold_puts = sold_puts[sold_puts["Days Until Expiration"] > 0]
         sold_puts = ensure_dataframe(sold_puts)
-
         sold_puts["Remaining Income"] = 100 * sold_puts["Price"] / sold_puts["Strike"]
         sold_puts["Remaining % per Day"] = (
             sold_puts["Remaining Income"] / sold_puts["Days Until Expiration"]
         )
-
         output_df = ensure_dataframe(
             sold_puts[
                 [
@@ -117,19 +81,15 @@ def get_sold_puts_data(file_path, logger) -> pd.DataFrame:
             columns={"Price": "Current Price", "Remaining Income": "Remaining %"}
         )
         output_df = output_df.sort_values(by="Remaining % per Day", ascending=False)
-
         output_df["Expiration"] = output_df["Expiration"].dt.strftime("%m/%d/%Y")
         output_df["Remaining %"] = output_df["Remaining %"].map("{:.2f}%".format)
         output_df["Remaining % per Day"] = output_df["Remaining % per Day"].map(
             "{:.2f}%".format
         )
-
         return output_df
-
     except FileNotFoundError:
         return pd.DataFrame()
     except Exception as e:
-
         return pd.DataFrame()
 
 
@@ -138,40 +98,25 @@ def get_spreads_data(file_path, logger) -> pd.DataFrame:
     try:
         file_content = _read_file_skip_comments(file_path)
         df = pd.read_csv(io.StringIO(file_content), sep=",", quotechar='"')
-
         df.columns = [col.split("(")[0].strip() for col in df.columns]
-
-        # Filter for options before parsing symbols
-        options_df = df[df["Security Type"] == "Option"].copy()
+        options_df = filter_options(df)
         options_df = ensure_dataframe(options_df)
-
         options_df = parse_symbol(options_df, logger)
-
-        options_df.dropna(
-            subset=["Ticker", "Expiration", "Strike", "Type"], inplace=True
-        )
-
+        options_df = drop_invalid_options(options_df)
         puts = options_df[(options_df["Type"] == "P")].copy()
         if isinstance(puts, pd.Series):
             puts = puts.to_frame().T
-
-        # Ensure .replace is called on a Series
-        puts["Price"] = pd.to_numeric(
-            puts["Price"].astype(str).replace(r"\$", "", regex=True), errors="coerce"
-        )
+        puts = clean_price_column(puts, "Price")
         puts["Qty"] = pd.to_numeric(puts["Qty"], errors="coerce")
         puts.dropna(subset=["Price"], inplace=True)
-
         spreads = []
         for _, group in puts.groupby(["Ticker", "Expiration"]):
             if isinstance(group, pd.Series):
                 group = group.to_frame().T
             if len(group) > 1:
-                # Convert Qty to numeric in group
                 group["Qty"] = pd.to_numeric(group["Qty"], errors="coerce")
                 short_puts = group[group["Qty"] < 0]
                 long_puts = group[group["Qty"] > 0]
-
                 for _, short_put in short_puts.iterrows():
                     for _, long_put in long_puts.iterrows():
                         if short_put["Qty"] == -long_put["Qty"]:
@@ -187,12 +132,10 @@ def get_spreads_data(file_path, logger) -> pd.DataFrame:
                                         expected_income / days_to_expiration
                                     )
                                     risk_per_contract = strike_gap * 100
-
                                     spreads.append(
                                         {
                                             "Ticker": short_put["Ticker"],
                                             "Days Left": days_to_expiration,
-                                            # 'Expiration': pd.to_datetime(short['Expiration']).strftime('%Y-%m-%d'),
                                             "Shrt Strike": short_put["Strike"],
                                             "Lng Strike": long_put["Strike"],
                                             "Shrt Price": short_put["Price"],
@@ -206,13 +149,9 @@ def get_spreads_data(file_path, logger) -> pd.DataFrame:
                                     )
         if spreads:
             df_spreads = pd.DataFrame(spreads)
-
             return df_spreads
-
         return pd.DataFrame()
-
     except Exception as e:
-
         return pd.DataFrame()
 
 
@@ -220,16 +159,7 @@ from textual.containers import Vertical
 from textual.widgets import ListView, ListItem
 
 
-def get_config():
-    """Reads the configuration from config.ini."""
-    config = configparser.ConfigParser()
-    config.read("config.ini")
-    # Ensure DEBUG is present in config
-    if "DEBUG" not in config["DEFAULT"]:
-        config["DEFAULT"]["DEBUG"] = "false"
-        with open("config.ini", "w") as configfile:
-            config.write(configfile)
-    return config
+# get_config now imported from config_manager
 
 
 from textual.containers import Center, Vertical
